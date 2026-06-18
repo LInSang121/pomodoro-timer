@@ -28,6 +28,28 @@ COLOR_BTN_BG = "#3B3B50"       # 按钮背景
 COLOR_BTN_HOVER = "#4A4A62"    # 按钮悬停
 COLOR_PROGRESS_BG = "#3B3B50"  # 进度条背景
 
+# 模式 → 属性的映射表（所有模式相关数据集中定义）
+MODE_COLORS = {
+    "work": COLOR_TOMATO,
+    "short_break": COLOR_GREEN,
+    "long_break": COLOR_BLUE,
+}
+MODE_LABELS = {
+    "work": "专注工作",
+    "short_break": "短休息",
+    "long_break": "长休息",
+}
+MODE_TITLES = {
+    "work": "🍅 时间到！",
+    "short_break": "☕ 休息结束",
+    "long_break": "🌿 长休息结束",
+}
+MODE_MESSAGES = {
+    "work": "一个番茄完成！休息一下吧～",
+    "short_break": "短休息结束，继续加油！",
+    "long_break": "长休息结束，精力充沛了吧！",
+}
+
 
 class PomodoroApp:
     def __init__(self):
@@ -45,12 +67,12 @@ class PomodoroApp:
         y = (sh - 540) // 2
         self.root.geometry(f"+{x}+{y}")
 
-        # 置顶
-        self.topmost = tk.BooleanVar(value=True)
+        # 置顶（用普通 bool，不用 tk.BooleanVar）
+        self._topmost = True
         self.root.wm_attributes("-topmost", True)
 
         # ── 状态变量 ──
-        self.mode = "work"                # work / short_break / long_break
+        self.mode = "work"
         self.mode_durations = {
             "work": WORK_MIN * 60,
             "short_break": SHORT_BREAK_MIN * 60,
@@ -62,6 +84,7 @@ class PomodoroApp:
         self.paused = False
         self.session_count = 0            # 已完成番茄数
         self.timer_id = None
+        self._style = None                # ttk.Style 实例，延迟创建
 
         # ── 构建界面 ──
         self._build_ui()
@@ -139,16 +162,16 @@ class PomodoroApp:
         # 模式标签
         self.mode_label = tk.Label(
             timer_panel,
-            text="专注工作",
+            text=MODE_LABELS["work"],
             font=("Segoe UI", 12),
             fg=COLOR_TOMATO, bg=COLOR_SURFACE
         )
         self.mode_label.pack(pady=(0, 4))
 
         # ── 进度条 ──
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
+        self._style = ttk.Style()
+        self._style.theme_use("clam")
+        self._style.configure(
             "Pomodoro.Horizontal.TProgressbar",
             troughcolor=COLOR_PROGRESS_BG,
             background=COLOR_TOMATO,
@@ -171,15 +194,18 @@ class PomodoroApp:
         mode_frame = tk.Frame(main, bg=COLOR_BG)
         mode_frame.pack(fill="x", pady=(0, 12))
 
-        self.btn_work = self._make_mode_btn(mode_frame, "🍅 工作", COLOR_TOMATO, "work")
+        self.btn_work = self._make_mode_btn(mode_frame, "🍅 工作", "work")
         self.btn_work.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self._set_btn_active(self.btn_work, COLOR_TOMATO)
+        self._set_btn_active(self.btn_work)
 
-        self.btn_short = self._make_mode_btn(mode_frame, "☕ 短休", COLOR_GREEN, "short_break")
+        self.btn_short = self._make_mode_btn(mode_frame, "☕ 短休", "short_break")
         self.btn_short.pack(side="left", expand=True, fill="x", padx=2)
 
-        self.btn_long = self._make_mode_btn(mode_frame, "🌿 长休", COLOR_BLUE, "long_break")
+        self.btn_long = self._make_mode_btn(mode_frame, "🌿 长休", "long_break")
         self.btn_long.pack(side="left", expand=True, fill="x", padx=(4, 0))
+
+        # 缓存模式按钮列表，避免多处重复构造
+        self._mode_buttons = [self.btn_work, self.btn_short, self.btn_long]
 
         # ── 控制按钮 ──
         ctrl_frame = tk.Frame(main, bg=COLOR_BG)
@@ -218,7 +244,7 @@ class PomodoroApp:
         )
         hint.pack(side="bottom", pady=(4, 0))
 
-    def _make_mode_btn(self, parent, text, active_color, mode):
+    def _make_mode_btn(self, parent, text, mode):
         """创建模式切换按钮"""
         btn = tk.Label(
             parent,
@@ -229,13 +255,12 @@ class PomodoroApp:
             cursor="hand2",
             padx=8, pady=6,
         )
-        btn._active_color = active_color
-        btn._mode = mode
-        btn.bind("<Button-1>", lambda e: self._switch_mode(mode))
+        btn.bind("<Button-1>", lambda e, m=mode: self._switch_mode(m))
         return btn
 
-    def _set_btn_active(self, btn, color):
+    def _set_btn_active(self, btn):
         """设置按钮为选中状态"""
+        color = MODE_COLORS[self.mode]
         btn.configure(fg="white", bg=color)
 
     def _set_btn_inactive(self, btn):
@@ -251,7 +276,6 @@ class PomodoroApp:
         was_running = self.running and not self.paused
 
         if was_running:
-            # 运行中切换：先暂停
             self._pause()
 
         self.mode = mode
@@ -263,28 +287,20 @@ class PomodoroApp:
         self.progress.configure(maximum=self.total, value=self.total)
 
         # 更新模式按钮样式
-        colors = {"work": COLOR_TOMATO, "short_break": COLOR_GREEN, "long_break": COLOR_BLUE}
-        labels = {"work": "专注工作", "short_break": "短休息", "long_break": "长休息"}
-        buttons = {"work": self.btn_work, "short_break": self.btn_short, "long_break": self.btn_long}
-
-        for m, btn in buttons.items():
+        for btn in self._mode_buttons:
             self._set_btn_inactive(btn)
+        self._set_btn_active(self._mode_button_for(mode))
 
-        active_color = colors[mode]
-        self._set_btn_active(buttons[mode], active_color)
-
-        # 更新模式标签和进度条颜色
-        self.mode_label.configure(text=labels[mode], fg=active_color)
-        style = ttk.Style()
-        style.configure(
+        # 更新模式标签 + 进度条 + 开始按钮颜色
+        active_color = MODE_COLORS[mode]
+        self.mode_label.configure(text=MODE_LABELS[mode], fg=active_color)
+        self._style.configure(
             "Pomodoro.Horizontal.TProgressbar",
             background=active_color,
             darkcolor=active_color,
             lightcolor=active_color,
         )
-
-        # 更新开始按钮颜色和文字
-        self.btn_start.configure(bg=active_color, activebackground=self._darken(active_color))
+        self._update_start_btn_color(active_color)
 
         if was_running:
             self.btn_start.configure(text="▶  继 续")
@@ -292,6 +308,10 @@ class PomodoroApp:
         else:
             self.btn_start.configure(text="▶  开 始")
             self._mode_btns_enable(True)
+
+    def _mode_button_for(self, mode):
+        """根据模式字符串返回对应的按钮控件"""
+        return {"work": self.btn_work, "short_break": self.btn_short, "long_break": self.btn_long}[mode]
 
     def _toggle_start_pause(self):
         """开始 / 暂停"""
@@ -307,19 +327,14 @@ class PomodoroApp:
         self.running = True
         self.paused = False
         self.btn_start.configure(text="⏸  暂 停")
-
-        # 禁用模式切换（运行中不允许切换模式）
         self._mode_btns_enable(False)
-
         self._tick()
 
     def _pause(self):
         """暂停"""
         self.paused = True
         self.btn_start.configure(text="▶  继 续")
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
-            self.timer_id = None
+        self._cancel_timer()
 
     def _resume(self):
         """继续"""
@@ -329,9 +344,7 @@ class PomodoroApp:
 
     def _reset(self):
         """重置当前会话"""
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
-            self.timer_id = None
+        self._cancel_timer()
 
         self.running = False
         self.paused = False
@@ -342,8 +355,7 @@ class PomodoroApp:
         self.progress.configure(value=self.total)
         self.btn_start.configure(text="▶  开 始")
 
-        active_color = self._current_color()
-        self.btn_start.configure(bg=active_color, activebackground=self._darken(active_color))
+        self._update_start_btn_color(MODE_COLORS[self.mode])
         self._mode_btns_enable(True)
 
     def _tick(self):
@@ -357,7 +369,6 @@ class PomodoroApp:
             self.progress.configure(value=self.remaining)
             self.timer_id = self.root.after(1000, self._tick)
         else:
-            # 时间到
             self._timer_done()
 
     def _timer_done(self):
@@ -370,42 +381,28 @@ class PomodoroApp:
         threading.Thread(target=self._play_alarm, daemon=True).start()
 
         # 弹窗
-        titles = {"work": "🍅 时间到！", "short_break": "☕ 休息结束", "long_break": "🌿 长休息结束"}
-        messages = {
-            "work": "一个番茄完成！休息一下吧～",
-            "short_break": "短休息结束，继续加油！",
-            "long_break": "长休息结束，精力充沛了吧！",
-        }
-
         self.root.after(100, lambda: messagebox.showinfo(
-            titles.get(self.mode, "时间到"),
-            messages.get(self.mode, "计时结束")
+            MODE_TITLES.get(self.mode, "时间到"),
+            MODE_MESSAGES.get(self.mode, "计时结束")
         ))
 
         if self.mode == "work":
-            # 完成一个番茄
             self.session_count += 1
             self.counter_label.configure(text=f"已完成: {self.session_count} 个番茄")
             self._update_tomato_icons()
 
-            # 判断下一个模式
             if self.session_count % LONG_BREAK_INTERVAL == 0:
                 self._switch_mode("long_break")
             else:
                 self._switch_mode("short_break")
         else:
-            # 休息结束，切换到工作模式
             self._switch_mode("work")
 
-        self.btn_start.configure(text="▶  开 始")
-        active_color = self._current_color()
-        self.btn_start.configure(bg=active_color, activebackground=self._darken(active_color))
-        self._mode_btns_enable(True)
+        # _switch_mode 已将按钮和颜色设置为正确的"未开始"状态，无需重复设置
 
     def _play_alarm(self):
         """播放提示音（Windows Beep）"""
         try:
-            # 三段短促 Beep
             for _ in range(3):
                 winsound.Beep(880, 200)
                 time.sleep(0.15)
@@ -421,28 +418,31 @@ class PomodoroApp:
     @staticmethod
     def _fmt_time(seconds):
         """格式化为 MM:SS"""
-        m = seconds // 60
-        s = seconds % 60
+        m, s = divmod(seconds, 60)
         return f"{m:02d}:{s:02d}"
-
-    def _current_color(self):
-        """当前模式的颜色"""
-        colors = {"work": COLOR_TOMATO, "short_break": COLOR_GREEN, "long_break": COLOR_BLUE}
-        return colors.get(self.mode, COLOR_TOMATO)
 
     @staticmethod
     def _darken(hex_color, factor=0.85):
         """颜色加深"""
         hex_color = hex_color.lstrip("#")
-        r = int(int(hex_color[0:2], 16) * factor)
-        g = int(int(hex_color[2:4], 16) * factor)
-        b = int(int(hex_color[4:6], 16) * factor)
-        return f"#{r:02x}{g:02x}{b:02x}"
+        r = int(hex_color[0:2], 16) * factor
+        g = int(hex_color[2:4], 16) * factor
+        b = int(hex_color[4:6], 16) * factor
+        return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+
+    def _update_start_btn_color(self, color):
+        """更新开始按钮颜色（消除 3 处重复代码）"""
+        self.btn_start.configure(bg=color, activebackground=self._darken(color))
+
+    def _cancel_timer(self):
+        """取消已安排的 tick 回调（消除 2 处重复代码）"""
+        if self.timer_id:
+            self.root.after_cancel(self.timer_id)
+            self.timer_id = None
 
     def _mode_btns_enable(self, enable):
         """启用/禁用模式切换按钮"""
-        state = "normal" if enable else "disabled"
-        for btn in [self.btn_work, self.btn_short, self.btn_long]:
+        for btn in self._mode_buttons:
             if enable:
                 btn.configure(cursor="hand2")
             else:
@@ -455,17 +455,15 @@ class PomodoroApp:
 
     def _toggle_topmost(self, event=None):
         """切换窗口置顶"""
-        current = self.topmost.get()
-        self.topmost.set(not current)
-        self.root.wm_attributes("-topmost", not current)
+        self._topmost = not self._topmost
+        self.root.wm_attributes("-topmost", self._topmost)
         self.pin_btn.configure(
-            fg=COLOR_TOMATO if not current else COLOR_TEXT_SECONDARY
+            fg=COLOR_TOMATO if self._topmost else COLOR_TEXT_SECONDARY
         )
 
     def _on_close(self):
         """关闭窗口"""
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
+        self._cancel_timer()
         self.root.destroy()
 
     # ══════════════════════════════════════════════════════
